@@ -59,6 +59,7 @@ public final class Scheduler {
     // This constant is also used in our views: see scheduler_tables.sql. Do not change.
     static final String SCHEDULER_NAME = "dcm-scheduler";
     private final Model model;
+    private final Model preemption;
 
     private final AtomicInteger batchId = new AtomicInteger(0);
     private final MetricRegistry metrics = new MetricRegistry();
@@ -90,6 +91,8 @@ public final class Scheduler {
         this.podEventsToDatabase = new PodEventsToDatabase(dbConnectionPool);
         this.model = createDcmModel(dbConnectionPool.getConnectionToDb(), solverToUse, policies, numThreads,
                                     solverMaxTimeInSeconds, debugMode);
+        this.preemption = createDcmModel(dbConnectionPool.getConnectionToDb(), solverToUse, policies, numThreads,
+                                         solverMaxTimeInSeconds, debugMode);
         LOG.info("Initialized scheduler:: model:{}", model);
     }
 

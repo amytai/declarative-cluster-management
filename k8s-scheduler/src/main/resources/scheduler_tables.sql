@@ -215,6 +215,7 @@ select
   uid,
   pod_name,
   status,
+  node_name,
   node_name as controllable__node_name,
   namespace,
   cpu_request,

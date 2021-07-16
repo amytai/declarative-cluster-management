@@ -270,8 +270,8 @@ public class SchedulerTest {
      */
     @Test
     public void testNoDuplicatePolicyNames() {
-        final List<String> namesList = Policies.getAllPolicies();
-        final Set<String> namesSet = new HashSet<>(Policies.getAllPolicies());
+        final List<String> namesList = Policies.getInitialPlacementPolicies();
+        final Set<String> namesSet = new HashSet<>(Policies.getInitialPlacementPolicies());
         assertEquals(namesList.size(), namesSet.size());
     }
 
