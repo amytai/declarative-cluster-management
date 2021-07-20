@@ -21,7 +21,7 @@ class Policies {
     private static final List<Policy> PREEMPTION_POLICIES = new ArrayList<>();
 
     static {
-//        INITIAL_PLACEMENT_POLICIES.add(disallowNullNodeSoft());
+        INITIAL_PLACEMENT_POLICIES.add(disallowNullNodeSoft());
         INITIAL_PLACEMENT_POLICIES.add(preemption());
         INITIAL_PLACEMENT_POLICIES.add(nodePredicates());
         INITIAL_PLACEMENT_POLICIES.add(nodeSelectorPredicate());

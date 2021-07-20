@@ -315,7 +315,7 @@ public class SchedulerTest {
         // All pod additions have completed
         final Scheduler scheduler = new Scheduler(dbConnectionPool, policies, "ORTOOLS", true,
                 NUM_THREADS);
-        final Result<? extends Record> results = scheduler.runOneLoop();
+        final Result<? extends Record> results = scheduler.initialPlacement();
         assertEquals(numPods, results.size());
         results.forEach(r -> assertEquals("n" + nodeToAssignTo,
                 r.get("CONTROLLABLE__NODE_NAME", String.class)));
@@ -422,7 +422,7 @@ public class SchedulerTest {
         // Works when using Minizinc 2.3.2
         final Scheduler scheduler = new Scheduler(dbConnectionPool, policies, "ORTOOLS", true,
                 NUM_THREADS);
-        final Result<? extends Record> results = scheduler.runOneLoop();
+        final Result<? extends Record> results = scheduler.initialPlacement();
         assertEquals(numPods, results.size());
         results.forEach(r -> {
             final String pod = r.get("POD_NAME", String.class);
@@ -555,7 +555,7 @@ public class SchedulerTest {
         final Scheduler scheduler = new Scheduler(dbConnectionPool, policies, "ORTOOLS", true,
                 NUM_THREADS);
 
-        final Result<? extends Record> results = scheduler.runOneLoop();
+        final Result<? extends Record> results = scheduler.initialPlacement();
         if (!shouldBeAffineToLabelledNodes && !shouldBeAffineToRemainingNodes) {
             results.forEach(
                     r -> {
@@ -695,7 +695,7 @@ public class SchedulerTest {
                                                     Policies.podAntiAffinityPredicate());
         final Scheduler scheduler = new Scheduler(dbConnectionPool, policies, "ORTOOLS", true,
                 NUM_THREADS);
-        final Result<? extends Record> result = scheduler.runOneLoop();
+        final Result<? extends Record> result = scheduler.initialPlacement();
 
         for (final Record record : result) {
             final String podName = record.getValue("POD_NAME", String.class);
@@ -934,14 +934,14 @@ public class SchedulerTest {
                                                     Policies.capacityConstraint(useHardConstraint, useSoftConstraint));
         final Scheduler scheduler = new Scheduler(dbConnectionPool, policies, "ORTOOLS", true, NUM_THREADS);
         if (feasible) {
-            final Result<? extends Record> result = scheduler.runOneLoop();
+            final Result<? extends Record> result = scheduler.initialPlacement();
             assertEquals(numPods, result.size());
             final List<String> nodes = result.stream()
                                             .map(e -> e.getValue("CONTROLLABLE__NODE_NAME", String.class))
                                             .collect(Collectors.toList());
             assertTrue(assertOn.test(nodes));
         } else {
-            assertThrows(SolverException.class, scheduler::runOneLoop);
+            assertThrows(SolverException.class, scheduler::initialPlacement);
         }
     }
 
@@ -1020,7 +1020,7 @@ public class SchedulerTest {
         final List<String> policies = Policies.from(Policies.nodePredicates(),  Policies.disallowNullNodeSoft(),
                                                     Policies.taintsAndTolerations());
         final Scheduler scheduler = new Scheduler(dbConnectionPool, policies, "ORTOOLS", true, NUM_THREADS);
-        final Result<? extends Record> result = scheduler.runOneLoop();
+        final Result<? extends Record> result = scheduler.initialPlacement();
         assertEquals(numPods, result.size());
         final List<String> nodes = result.stream()
                 .map(e -> e.getValue("CONTROLLABLE__NODE_NAME", String.class))
@@ -1162,7 +1162,7 @@ public class SchedulerTest {
         // All pod additions have completed
         final Scheduler scheduler = new Scheduler(dbConnectionPool, policies, "ORTOOLS", true, NUM_THREADS);
         for (int i = 0; i < 100; i++) {
-            final Result<? extends Record> results = scheduler.runOneLoop();
+            final Result<? extends Record> results = scheduler.initialPlacement();
             System.out.println(results);
         }
     }
@@ -1242,7 +1242,7 @@ public class SchedulerTest {
         }
 
         // Schedule
-        final Result<? extends Record> results = scheduler.runOneLoop((table) -> {
+        final Result<? extends Record> results = scheduler.initialPlacement((table) -> {
             if (table.getName().equalsIgnoreCase("spare_capacity_per_node")) {
                 final String lb = "node-" + 3;
                 final String ub = "none-" + 7;

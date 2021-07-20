@@ -10,9 +10,9 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import com.vmware.dcm.backend.minizinc.MinizincSolver;
 import com.vmware.dcm.backend.ortools.OrToolsSolver;
 import com.vmware.dcm.k8s.generated.Tables;
+import com.vmware.dcm.k8s.generated.tables.records.PodsToAssignRecord;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.commons.cli.CommandLine;
@@ -24,18 +24,19 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.Result;
 import org.jooq.Table;
+import org.jooq.TableField;
 import org.jooq.Update;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingDeque;
@@ -89,10 +90,16 @@ public final class Scheduler {
         }
         this.dbConnectionPool = dbConnectionPool;
         this.podEventsToDatabase = new PodEventsToDatabase(dbConnectionPool);
-        this.model = createDcmModel(dbConnectionPool.getConnectionToDb(), solverToUse, policies, numThreads,
-                                    solverMaxTimeInSeconds, debugMode);
-        this.preemption = createDcmModel(dbConnectionPool.getConnectionToDb(), solverToUse, policies, numThreads,
-                                         solverMaxTimeInSeconds, debugMode);
+        final OrToolsSolver orToolsSolver = new OrToolsSolver.Builder()
+                .setNumThreads(numThreads)
+                .setPrintDiagnostics(debugMode)
+                .setMaxTimeInSeconds(solverMaxTimeInSeconds).build();
+        this.model = Model.build(dbConnectionPool.getConnectionToDb(), orToolsSolver, policies);
+        final OrToolsSolver orToolsSolverPreemption = new OrToolsSolver.Builder()
+                .setNumThreads(numThreads)
+                .setPrintDiagnostics(debugMode)
+                .setMaxTimeInSeconds(solverMaxTimeInSeconds).build();
+        this.preemption = Model.build(dbConnectionPool.getConnectionToDb(), orToolsSolverPreemption, policies);
         LOG.info("Initialized scheduler:: model:{}", model);
     }
 
@@ -140,69 +147,61 @@ public final class Scheduler {
             final int batch = batchId.incrementAndGet();
 
             final long now = System.nanoTime();
-            final Result<? extends Record> podsToAssignUpdated = runOneLoop();
+            final TableField<PodsToAssignRecord, String> nodeNameField = Tables.PODS_TO_ASSIGN.CONTROLLABLE__NODE_NAME;
+            final Result<? extends Record> podsToAssignUpdated = initialPlacement();
+            final Map<Boolean, ? extends Result<? extends Record>> byType = podsToAssignUpdated
+                                        .intoGroups(r -> !r.get(nodeNameField).equals("NULL_NODE"));
             final long totalTime = System.nanoTime() - now;
             solverInvocations.mark();
 
             fetchCount -= podsToAssignUpdated.size();
 
-            // First, locally update the node_name entries for pods
-            try (final DSLContext conn = dbConnectionPool.getConnectionToDb()) {
-                final List<Update<?>> updates = new ArrayList<>();
-                podsToAssignUpdated.forEach(r -> {
-                    final String podName = r.get(Tables.PODS_TO_ASSIGN.POD_NAME);
-                    final String nodeName = r.get(Tables.PODS_TO_ASSIGN.CONTROLLABLE__NODE_NAME);
-                    updates.add(
-                        conn.update(Tables.POD_INFO)
-                                .set(Tables.POD_INFO.NODE_NAME, nodeName)
-                                .where(Tables.POD_INFO.POD_NAME.eq(podName))
-                    );
-                    LOG.info("Scheduling decision for pod {} as part of batch {} made in time: {}",
-                             podName, batch, totalTime);
-                });
-                conn.batch(updates).execute();
+            // Handle successful placements first
+            if (byType.containsKey(true)) {
+                // First, locally update the node_name entries for pods
+                try (final DSLContext conn = dbConnectionPool.getConnectionToDb()) {
+                    final List<Update<?>> updates = new ArrayList<>();
+                    byType.get(true).forEach(r -> {
+                        final String podName = r.get(Tables.PODS_TO_ASSIGN.POD_NAME);
+                        final String nodeName = r.get(Tables.PODS_TO_ASSIGN.CONTROLLABLE__NODE_NAME);
+                        updates.add(
+                                conn.update(Tables.POD_INFO)
+                                        .set(Tables.POD_INFO.NODE_NAME, nodeName)
+                                        .where(Tables.POD_INFO.POD_NAME.eq(podName))
+                        );
+                        LOG.info("Scheduling decision for pod {} as part of batch {} made in time: {}",
+                                podName, batch, totalTime);
+                    });
+                    conn.batch(updates).execute();
+                }
+                LOG.info("Done with updates");
+                // Next, issue bind requests for pod -> node_name
+                binder.bindManyAsnc(byType.get(true));
+                LOG.info("Done with bindings");
             }
-            LOG.info("Done with updates");
-            // Next, issue bind requests for pod -> node_name
-            binder.bindManyAsnc(podsToAssignUpdated);
-            LOG.info("Done with bindings");
+
+            // Initiate preemption for assignments that failed
+            if (byType.containsKey(false)) {
+                byType.get(false).forEach(
+                        e -> LOG.info("pod:{} could not be assigned a node in this iteration",
+                                ((PodsToAssignRecord) e).getPodName())
+                );
+            }
         }
     }
 
-    Result<? extends Record> runOneLoop() {
+    Result<? extends Record> initialPlacement() {
         final Timer.Context solveTimer = solveTimes.time();
         final Result<? extends Record> podsToAssignUpdated = model.solve("PODS_TO_ASSIGN");
         solveTimer.stop();
         return podsToAssignUpdated;
     }
 
-    Result<? extends Record> runOneLoop(final Function<Table<?>, Result<? extends Record>> fetcher) {
+    Result<? extends Record> initialPlacement(final Function<Table<?>, Result<? extends Record>> fetcher) {
         final Timer.Context solveTimer = solveTimes.time();
         final Result<? extends Record> podsToAssignUpdated = model.solve("PODS_TO_ASSIGN", fetcher);
         solveTimer.stop();
         return podsToAssignUpdated;
-    }
-
-    /**
-     * Instantiates a DCM model based on the configured policies.
-     */
-    private Model createDcmModel(final DSLContext conn, final String solverToUse, final List<String> policies,
-                                 final int numThreads, final int solverMaxTimeInSeconds, final boolean debugMode) {
-        switch (solverToUse) {
-            case "ORTOOLS":
-                final OrToolsSolver orToolsSolver = new OrToolsSolver.Builder()
-                                                     .setNumThreads(numThreads)
-                                                     .setPrintDiagnostics(debugMode)
-                                                     .setMaxTimeInSeconds(solverMaxTimeInSeconds).build();
-                return Model.build(conn, orToolsSolver, policies);
-            case "MNZ-CHUFFED":
-                final File modelFile = new File(MINIZINC_MODEL_PATH + "/" + "k8s_model.mzn");
-                final File dataFile = new File(MINIZINC_MODEL_PATH + "/" + "k8s_data.dzn");
-                final MinizincSolver solver = new MinizincSolver(modelFile, dataFile, new Conf());
-                return Model.build(conn, solver, policies);
-            default:
-                throw new IllegalArgumentException(solverToUse);
-        }
     }
 
     void shutdown() throws InterruptedException {

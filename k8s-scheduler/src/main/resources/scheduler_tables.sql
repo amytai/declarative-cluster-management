@@ -205,6 +205,15 @@ create table pod_images
   foreign key(pod_uid) references pod_info(uid) on delete cascade
 );
 
+-- Tracks pod disruption budget match expressions
+create table pdb_match_expressions
+(
+  pdb_name varchar(30) not null,
+  min_available integer not null,
+  max_unavailable integer not null,
+  allowed_disruptions integer not null
+);
+
 -- Select all pods that need to be scheduled.
 -- We also indicate boolean values to check whether
 -- a pod has node selector or pod affinity labels,
