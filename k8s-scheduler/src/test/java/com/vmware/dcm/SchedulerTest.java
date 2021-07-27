@@ -1259,6 +1259,76 @@ public class SchedulerTest {
     }
 
 
+    /*
+     * Test preemption code path
+     */
+    @Test
+    public void testPreemption() {
+        final DBConnectionPool dbConnectionPool = new DBConnectionPool();
+        final DSLContext conn = dbConnectionPool.getConnectionToDb();
+        final List<String> policies = Policies.from(Policies.nodePredicates(),
+                                                    Policies.disallowNullNodeSoft(),
+                                                    Policies.podAntiAffinityPredicate());
+        final Scheduler scheduler = new Scheduler(dbConnectionPool, policies, "ORTOOLS", true, NUM_THREADS);
+
+        final NodeResourceEventHandler nodeHandler = new NodeResourceEventHandler(dbConnectionPool);
+        final PodResourceEventHandler podHandler = new PodResourceEventHandler(scheduler::handlePodEvent);
+
+        // Add nodes
+        for (int i = 0; i < 5; i++) {
+            final String nodeName = "node-" + i;
+            final Node node = newNode(nodeName, Collections.emptyMap(), Collections.emptyList());
+            node.getStatus().getCapacity().put("cpu", new Quantity(String.valueOf(100)));
+            node.getStatus().getCapacity().put("memory", new Quantity(String.valueOf(100)));
+            nodeHandler.onAddSync(node);
+
+            // Add one system pod per node
+            final String podName = "system-pod-" + nodeName;
+            final Pod pod;
+            final String status = "Running";
+            pod = newPod(podName, status);
+            pod.getSpec().setPriority(20);
+            pod.getSpec().setNodeName(nodeName);
+            pod.getMetadata().setLabels(Map.of("k1", "l1"));
+            podHandler.onAddSync(pod);
+        }
+
+        // add high priority pods
+        for (int i = 0; i < 5; i++) {
+            final String podName = "pod-" + i;
+            final String status = "Pending";
+            final Pod pod = newPod(podName, status);
+            pod.getSpec().setPriority(100);
+            final List<PodAffinityTerm> notInTerm = List.of(term("kubernetes.io/hostname",
+                                                                  podExpr("k1", "In", "l1")));
+            final PodAntiAffinity podAntiAffinity = new PodAntiAffinity();
+            podAntiAffinity.setRequiredDuringSchedulingIgnoredDuringExecution(notInTerm);
+            pod.getSpec().getAffinity().setPodAntiAffinity(podAntiAffinity);
+            podHandler.onAddSync(pod);
+        }
+
+        // Schedule
+        try {
+            final Result<? extends Record> results = scheduler.initialPlacement();
+            assertEquals(Set.of("NULL_NODE"), results.intoSet(Tables.PODS_TO_ASSIGN.CONTROLLABLE__NODE_NAME));
+            conn.execute("create or replace view pods_to_assign as " +
+                             "(select * from pods_to_assign_no_limit limit 50) " +
+                             "union all (select * from node_name_not_null_pods)");
+            conn.execute("create or replace view assigned_pods as " +
+                            "(select * from node_name_not_null_pods limit 0)");
+            System.out.println(conn.fetch("select * from pods_to_assign"));
+            System.out.println(conn.fetch("select * from inter_pod_anti_affinity_matches_pending"));
+            System.out.println(conn.fetch("select * from inter_pod_anti_affinity_matches_scheduled"));
+            final Result<? extends Record> preemption = scheduler.preempt();
+            System.out.println(preemption);
+        } catch (final SolverException e) {
+            System.out.println(e);
+            System.out.println(e.core());
+            fail("Problem should not be UNSAT");
+        }
+    }
+
+
     private static Map<String, String> map(final String k1, final String v1) {
         return Collections.singletonMap(k1, v1);
     }

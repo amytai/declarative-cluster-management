@@ -233,6 +233,7 @@ select
   pods_request,
   owner_name,
   creation_timestamp,
+  priority,
   has_node_selector_labels,
   has_pod_affinity_requirements,
   has_pod_anti_affinity_requirements,
@@ -241,18 +242,20 @@ select
 from pod_info
 where status = 'Pending' and node_name is null and schedulerName = 'dcm-scheduler';
 
-create view assigned_pods as
+create view node_name_not_null_pods as
 select
   uid,
   pod_name,
   status,
   node_name,
+  node_name as controllable__node_name,
   namespace,
   cpu_request,
   memory_request,
   ephemeral_storage_request,
   pods_request,
   owner_name,
+  priority,
   creation_timestamp,
   has_node_selector_labels,
   has_pod_affinity_requirements,
@@ -261,6 +264,9 @@ select
   qos_class
 from pod_info
 where node_name is not null;
+
+create view assigned_pods as
+select * from node_name_not_null_pods;
 
 -- This view is updated dynamically to change the limit. This
 -- pattern is required because there is no clean way to enforce

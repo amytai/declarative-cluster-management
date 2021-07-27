@@ -22,7 +22,6 @@ class Policies {
 
     static {
         INITIAL_PLACEMENT_POLICIES.add(disallowNullNodeSoft());
-        INITIAL_PLACEMENT_POLICIES.add(preemption());
         INITIAL_PLACEMENT_POLICIES.add(nodePredicates());
         INITIAL_PLACEMENT_POLICIES.add(nodeSelectorPredicate());
         INITIAL_PLACEMENT_POLICIES.add(podAffinityPredicate());
@@ -32,6 +31,7 @@ class Policies {
         INITIAL_PLACEMENT_POLICIES.add(symmetryBreaking());
 
         PREEMPTION_POLICIES.add(preemption());
+        PREEMPTION_POLICIES.add(disallowNullNodeSoft());
         PREEMPTION_POLICIES.add(nodePredicates());
         PREEMPTION_POLICIES.add(nodeSelectorPredicate());
         PREEMPTION_POLICIES.add(podAffinityPredicate());
@@ -45,17 +45,26 @@ class Policies {
      * Only allow pods with current assignments to be marked NULL_NODE
      */
     static Policy preemption() {
-        final String constraint = "create view constraint_preemption_requirement as " +
+        final String constraint = "create constraint preemption_requirement as " +
                                   "select * from pods_to_assign " +
-                                  "check controllable__node_name != 'NULL_NODE' or node_name is not null";
-        return new Policy("Preemption", constraint);
+                                  "where node_name is not null " +
+                                  "check controllable__node_name = 'NULL_NODE' " +
+                                  "   or controllable__node_name = node_name";
+        final String constraint1 = "create constraint preemption_requirement_1 as " +
+                "select * from pods_to_assign " +
+                "where pod_name = 'pod-0' " +
+                "check controllable__node_name != 'NULL_NODE'";
+        final String maximize = "create constraint preemption_objective as " +
+                                "select * from pods_to_assign " +
+                                "maximize priority * (controllable__node_name != 'NULL_NODE')";
+        return new Policy("Preemption", List.of(constraint, constraint1, maximize));
     }
 
     /**
      * Prefer to avoid NULL_NODE assignments
      */
     static Policy disallowNullNodeSoft() {
-        final String constraint = "create view constraint_disallow_null_node as " +
+        final String constraint = "create constraint constraint_disallow_null_node as " +
                 "select * from pods_to_assign " +
                 "maximize controllable__node_name != 'NULL_NODE'";
         return new Policy("DisallowNullNode", constraint);

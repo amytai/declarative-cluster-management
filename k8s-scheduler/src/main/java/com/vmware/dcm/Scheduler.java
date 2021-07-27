@@ -59,7 +59,7 @@ public final class Scheduler {
 
     // This constant is also used in our views: see scheduler_tables.sql. Do not change.
     static final String SCHEDULER_NAME = "dcm-scheduler";
-    private final Model model;
+    private final Model initialPlacement;
     private final Model preemption;
 
     private final AtomicInteger batchId = new AtomicInteger(0);
@@ -94,13 +94,16 @@ public final class Scheduler {
                 .setNumThreads(numThreads)
                 .setPrintDiagnostics(debugMode)
                 .setMaxTimeInSeconds(solverMaxTimeInSeconds).build();
-        this.model = Model.build(dbConnectionPool.getConnectionToDb(), orToolsSolver, policies);
+        this.initialPlacement = Model.build(dbConnectionPool.getConnectionToDb(), orToolsSolver, policies);
         final OrToolsSolver orToolsSolverPreemption = new OrToolsSolver.Builder()
                 .setNumThreads(numThreads)
                 .setPrintDiagnostics(debugMode)
                 .setMaxTimeInSeconds(solverMaxTimeInSeconds).build();
-        this.preemption = Model.build(dbConnectionPool.getConnectionToDb(), orToolsSolverPreemption, policies);
-        LOG.info("Initialized scheduler:: model:{}", model);
+        final List<String> preemptionPolicies = new ArrayList<>(policies);
+        preemptionPolicies.addAll(Policies.from(Policies.preemption()));
+        this.preemption = Model.build(dbConnectionPool.getConnectionToDb(), orToolsSolverPreemption,
+                                      preemptionPolicies);
+        LOG.info("Initialized scheduler:: model:{}", initialPlacement);
     }
 
     void handlePodEvent(final PodEvent podEvent) {
@@ -141,7 +144,8 @@ public final class Scheduler {
     }
 
     void scheduleAllPendingPods(final IPodToNodeBinder binder) {
-        int fetchCount = dbConnectionPool.getConnectionToDb().fetchCount(Tables.PODS_TO_ASSIGN_NO_LIMIT);
+//        int fetchCount = dbConnectionPool.getConnectionToDb().fetchCount(Tables.PODS_TO_ASSIGN_NO_LIMIT);
+        int fetchCount = 50;
         while (fetchCount > 0) {
             LOG.info("Fetchcount is {}", fetchCount);
             final int batch = batchId.incrementAndGet();
@@ -192,14 +196,21 @@ public final class Scheduler {
 
     Result<? extends Record> initialPlacement() {
         final Timer.Context solveTimer = solveTimes.time();
-        final Result<? extends Record> podsToAssignUpdated = model.solve("PODS_TO_ASSIGN");
+        final Result<? extends Record> podsToAssignUpdated = initialPlacement.solve("PODS_TO_ASSIGN");
         solveTimer.stop();
         return podsToAssignUpdated;
     }
 
     Result<? extends Record> initialPlacement(final Function<Table<?>, Result<? extends Record>> fetcher) {
         final Timer.Context solveTimer = solveTimes.time();
-        final Result<? extends Record> podsToAssignUpdated = model.solve("PODS_TO_ASSIGN", fetcher);
+        final Result<? extends Record> podsToAssignUpdated = initialPlacement.solve("PODS_TO_ASSIGN", fetcher);
+        solveTimer.stop();
+        return podsToAssignUpdated;
+    }
+
+    Result<? extends Record> preempt() {
+        final Timer.Context solveTimer = solveTimes.time();
+        final Result<? extends Record> podsToAssignUpdated = preemption.solve("PODS_TO_ASSIGN");
         solveTimer.stop();
         return podsToAssignUpdated;
     }
