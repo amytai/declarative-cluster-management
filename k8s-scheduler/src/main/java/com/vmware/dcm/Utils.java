@@ -43,7 +43,7 @@ class Utils {
         final var ddlogConn = new DDlogDBConnectionPool(ddlogFile);
         final var autoScopeViews = Scheduler.autoScopeViews(20);
         ddlogConn.addScopedViews(autoScopeViews.extraViews());
-        ddlogConn.buildDDlog(true, compile);
+        ddlogConn.buildDDlog(compile);
         return ddlogConn;
     }
 

@@ -1110,7 +1110,7 @@ public class SchedulerTest {
     public void testSchedulerDebugDump() {
         //final DBConnectionPool dbConnectionPool = new DBConnectionPool();
         final DDlogDBConnectionPool dbConnectionPool = new DDlogDBConnectionPool(); //new DBConnectionPool();
-        dbConnectionPool.buildDDlog(true, false);
+        dbConnectionPool.buildDDlog(false);
 
         final DSLContext conn = dbConnectionPool.getConnectionToDb();
         DebugUtils.dbLoad(conn, "<enter some valid value here>");
